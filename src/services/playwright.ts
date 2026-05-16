@@ -31,6 +31,13 @@ export async function getCookies(): Promise<string> {
   return cookies.map(c => `${c.name}=${c.value}`).join('; ');
 }
 
+async function hasAuthTokenCookie(): Promise<boolean> {
+  if (process.env.TEST_MOCK_PLAYWRIGHT) return true;
+  if (!activePage) return false;
+  const cookies = await activePage.context().cookies('https://chat.qwen.ai/');
+  return cookies.some(c => c.name === 'token' && c.value);
+}
+
 export async function getBasicHeaders(): Promise<{ cookie: string, userAgent: string, bxV: string }> {
   if (process.env.TEST_MOCK_PLAYWRIGHT) return { cookie: 'token=mock', userAgent: 'mock', bxV: '2.5.36' };
   if (!activePage) throw new Error('Playwright not initialized');
@@ -195,35 +202,28 @@ async function _getQwenHeadersInternal(forceNew = false): Promise<{ headers: Rec
     await activePage.goto('https://chat.qwen.ai/', { waitUntil: 'domcontentloaded' });
   }
 
-  // Check if we are on a login page and perform automated login if credentials provided
-  const isLoginPage = activePage.url().includes('login') || (await activePage.$('input[type="email"], input[placeholder*="Email"]'));
-  if (isLoginPage) {
+  // Check if we are logged in. Qwen can show a usable /c/guest chat page with
+  // no login page, but guest sessions hit a much lower usage limit. Treat a
+  // missing token cookie as unauthenticated and use the configured credentials.
+  const isLoginPage = activePage.url().includes('login') || activePage.url().includes('auth') || (await activePage.$('input[type="email"], input[placeholder*="Email"]'));
+  const hasAuthToken = await hasAuthTokenCookie();
+  if (isLoginPage || !hasAuthToken) {
     const email = process.env.QWEN_EMAIL;
     const password = process.env.QWEN_PASSWORD;
-    
+
     if (email && password) {
-      console.log('[Playwright] Detected login page. Attempting automated login...');
+      console.log(`[Playwright] ${isLoginPage ? 'Detected login page' : 'Missing Qwen auth token; guest session detected'}. Attempting automated login...`);
       try {
-        // Wait for inputs
-        await activePage.waitForSelector('input[type="email"], input[placeholder*="Email"]', { timeout: 10000 });
-        await activePage.fill('input[type="email"], input[placeholder*="Email"]', email);
-        
-        // Sometimes password field only appears after clicking next or email entry
-        await activePage.keyboard.press('Enter');
-        await activePage.waitForTimeout(1000);
-        
-        await activePage.waitForSelector('input[type="password"]', { timeout: 10000 });
-        await activePage.fill('input[type="password"]', password);
-        await activePage.keyboard.press('Enter');
-        
-        // Wait for redirection back to chat
-        await activePage.waitForSelector('textarea:visible', { timeout: 30000 });
+        const loggedIn = await loginToQwen(email, password);
+        if (!loggedIn) {
+          throw new Error('loginToQwen returned false');
+        }
         console.log('[Playwright] Automated login successful.');
       } catch (err: any) {
         console.error('[Playwright] Automated login failed:', err.message);
       }
     } else {
-      console.warn('[Playwright] Detected login page but QWEN_EMAIL/PASSWORD not provided in .env');
+      console.warn('[Playwright] Qwen session appears unauthenticated but QWEN_EMAIL/PASSWORD not provided in .env');
     }
   }
 
