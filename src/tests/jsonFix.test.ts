@@ -54,3 +54,17 @@ try {
 } catch (e: any) {
     console.log('⚠️ Crazy case failed (too malformed), but error was:', e.message);
 }
+
+const invalidEscapes = '{"path": "C:\\\\Users\\\\name\\\\Documents"}';
+console.log('\nTesting invalid backslash escapes in string...');
+try {
+    const result = robustParseJSON(invalidEscapes);
+    console.log('Successfully parsed:', JSON.stringify(result, null, 2));
+    if (result.path === 'C:\\\\Users\\\\name\\\\Documents' || result.path === 'C:\\Users\\name\\Documents') {
+        console.log('✅ Invalid backslash escapes test passed!');
+    } else {
+        console.error('❌ Result path is incorrect:', result.path);
+    }
+} catch (e) {
+    console.error('❌ Failed to parse invalid backslash escapes:', e);
+}
