@@ -8,7 +8,7 @@
  * Modified By: Pedro Farias
  */
 
-import { initPlaywright, closePlaywright, activePage, BrowserType } from './services/playwright.ts';
+import { initPlaywright, closePlaywright, createPage, BrowserType } from './services/playwright.ts';
 import * as dotenv from 'dotenv';
 
 dotenv.config();
@@ -28,31 +28,43 @@ async function main() {
   if (email && password) {
     console.log(`[Login] Credentials found in .env. Attempting automated API login using ${browserType}...`);
     await initPlaywright(true, browserType);
-    const cookies = await activePage?.context()?.cookies();
-    const hasAuthCookie = cookies?.some(c => c.name.toLowerCase().includes('token') || c.name.toLowerCase().includes('session'));
-    if (hasAuthCookie) {
-      console.log('[Login] Automated login successful! Session saved.');
-      await closePlaywright();
-      process.exit(0);
-    } else {
-      console.warn('[Login] Automated login failed. Falling back to manual login...');
+    
+    const page = await createPage();
+    try {
+      const cookies = await page.context().cookies();
+      const hasAuthCookie = cookies?.some(c => c.name.toLowerCase().includes('token') || c.name.toLowerCase().includes('session'));
+      if (hasAuthCookie) {
+        console.log('[Login] Automated login successful! Session saved.');
+        await closePlaywright();
+        process.exit(0);
+      } else {
+        console.warn('[Login] Automated login failed. Falling back to manual login...');
+      }
+    } finally {
+      await page.close().catch(() => {});
     }
   }
 
   console.log(`Opening ${browserType} to allow manual login...`);
   await closePlaywright();
   await initPlaywright(false, browserType);
-  if (activePage) {
-    await activePage.goto('https://chat.qwen.ai/auth', { waitUntil: 'domcontentloaded' });
-  } else {
-    console.error('Failed to get active page');
+  
+  const page = await createPage();
+  
+  try {
+    await page.goto('https://chat.qwen.ai/auth', { waitUntil: 'domcontentloaded' });
+  } catch (err) {
+    console.error('Failed to navigate to login page:', err);
+    await page.close().catch(() => {});
     process.exit(1);
   }
+  
   console.log('Browser opened. Please login to chat.qwen.ai.');
   console.log('Once you are fully logged in and can see the chat interface, close the browser window or press Ctrl+C here.');
 
   process.on('SIGINT', async () => {
     console.log('Closing browser...');
+    await page.close().catch(() => {});
     await closePlaywright();
     process.exit(0);
   });
